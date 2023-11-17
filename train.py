@@ -40,6 +40,7 @@ parser.add_argument("--mode", type=str)
 parser.add_argument("--dataset_use_ratio", type=float, default=1.,help="dataset_use_ratio")
 parser.add_argument("--dataset", type=str, choices = ["mp3d", "replica"])
 
+parser.add_argument("--model", type=str, choices = ["PanoFormer", "Unifuse", "Bifuse"])
 parser.add_argument("--audio_enhanced", type=int, default=False)
 
 args = parser.parse_args()
