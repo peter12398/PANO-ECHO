@@ -23,6 +23,7 @@ python train.py \
 --disable_yaw_rotation_augmentation \
 --disable_LR_filp_augmentation \
 --exp_name exp_name \
+--model PanoFormer \
 --optimiser Adam \
 --num_epochs 500 \
 --mode train \
@@ -38,6 +39,7 @@ python train.py \
 --disable_yaw_rotation_augmentation \
 --disable_LR_filp_augmentation \
 --exp_name exp_name \
+--model PanoFormer \
 --optimiser Adam \
 --num_epochs 500 \
 --mode train \
@@ -53,6 +55,7 @@ python test.py \
 --disable_color_augmentation \
 --disable_yaw_rotation_augmentation \
 --disable_LR_filp_augmentation \
+--model PanoFormer \
 --exp_name exp_name \
 --mode test \
 --dataset_use_ratio 1 \
@@ -66,6 +69,7 @@ python test.py \
 --disable_color_augmentation \
 --disable_yaw_rotation_augmentation \
 --disable_LR_filp_augmentation \
+--model PanoFormer \
 --exp_name exp_name \
 --mode test \
 --dataset_use_ratio 0.1 \

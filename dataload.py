@@ -1156,6 +1156,219 @@ class Dataload_RealEquirectangular_PanoCacheObs(Dataset):
         return len(self.rgb_paths)
 
 
+class Dataload_RealEquirectangular_PanoCacheObs_Unifuse(Dataset):
+    def __init__(self, data_path, mode = "train", height=512, width=1024 ,disable_color_augmentation=False,
+                    disable_LR_filp_augmentation=False, disable_yaw_rotation_augmentation=False, test = False, is_training=False, transform = None, target_transform = None, dataset_use_ratio = 1., dataset = "mp3d"):
+
+        self.max_depth_meters = 16.0
+        self.w = width
+        self.h = height
+
+        self.is_training = is_training
+
+        self.color_augmentation = not disable_color_augmentation
+        self.LR_filp_augmentation = not disable_LR_filp_augmentation
+        self.yaw_rotation_augmentation = not disable_yaw_rotation_augmentation
+        
+        self.mode = mode
+        print("mode = {}".format(self.mode))
+        
+        self.dataset_use_ratio = dataset_use_ratio
+        print("self.dataset_use_ratio = {}".format(self.dataset_use_ratio))
+
+        self.e2c = Equirec2Cube(self.h, self.w, self.h // 2)
+
+        if self.color_augmentation:
+            try:
+                self.brightness = (0.8, 1.2)
+                self.contrast = (0.8, 1.2)
+                self.saturation = (0.8, 1.2)
+                self.hue = (-0.1, 0.1)
+                self.color_aug = transforms.ColorJitter.get_params(
+                    self.brightness, self.contrast, self.saturation, self.hue)
+            except TypeError:
+                self.brightness = 0.2
+                self.contrast = 0.2
+                self.saturation = 0.2
+                self.hue = 0.1
+                self.color_aug = transforms.ColorJitter.get_params(
+                    self.brightness, self.contrast, self.saturation, self.hue)
+
+        self.to_tensor = transforms.ToTensor()
+        self.normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+        self.test = test
+        
+        self.rgb_paths, self.depth_paths, self.wave_paths = (make_dataset(data_path, self.mode))
+        self.rgb_paths = sorted(self.rgb_paths)
+        self.depth_paths = sorted(self.depth_paths)
+        self.wave_paths = sorted(self.wave_paths)
+        
+        assert(len(self.rgb_paths) == len(self.depth_paths) == len(self.wave_paths))
+        
+        # sampling
+        use_dataset_ratio = self.dataset_use_ratio
+        print("dataset ratio used:{} of the whole datasets".format(use_dataset_ratio))
+        NUM_dataset_all = len(self.rgb_paths)
+        NUM_dataset = int(NUM_dataset_all*use_dataset_ratio)
+        print("dataset num used:{}/{} for datasets{}".format(NUM_dataset, NUM_dataset_all, self.mode))
+        dataset_sampled_index = random.choices(np.array(range(NUM_dataset_all)), k = NUM_dataset)
+        self.rgb_paths = [self.rgb_paths[i] for i in dataset_sampled_index]
+        self.depth_paths = [self.depth_paths[i] for i in dataset_sampled_index]
+        self.wave_paths = [self.wave_paths[i] for i in dataset_sampled_index]
+        
+        self.transform = transform
+        self.target_transform = target_transform
+        self.dataset = dataset
+        print("dataset {} used.".format(self.dataset))
+
+    def get_PanoCacheObs_rgb(self,rgb_path):
+
+        rgb_ = cv2.imread(rgb_path)
+        rgb_ = cv2.cvtColor(rgb_, cv2.COLOR_BGR2RGB)
+
+        rgb_angle360 =  rgb_/255. #np.reshape(np.concatenate(rgb_list_angle360, axis=1), (128*2,128*2,3))
+        
+        save_for_debug = False
+        if save_for_debug:
+            #import convert360
+            #from PIL import Image
+            #im = Image.fromarray(rgb_angle360.transpose(2,0,1))
+            #im_to_save = np.zeros((rgb_angle360.shape[0]*3,rgb_angle360.shape[1],rgb_angle360.shape[2]))
+            #im_to_save[rgb_angle360.shape[0]:rgb_angle360.shape[0]*2,:,:] = rgb_angle360*255.
+            im_to_save = rgb_angle360*255.
+            print("saving image using, remember to shut down.")                  
+            cv2.imwrite("./your_file.jpeg", im_to_save)
+            
+            #im.save("./your_file.jpeg")
+
+        return  rgb_angle360
+
+    def get_PanoCacheObs_depth(self,rgb_path):
+        rgb_ = np.load(rgb_path)
+        rgb_angle360 =  rgb_ #np.reshape(np.concatenate(rgb_list_angle360, axis=1), (128*2,128*2,3))
+        
+        return  rgb_angle360
+
+    def get_spec(self,wave_path):
+
+        #audio, audio_rate = librosa.load(wave_path, sr=44100, mono=False, duration=0.11)
+        #audio, audio_rate = librosa.load(wave_path, sr=16000, mono=False, duration=0.11)
+        # zero padding
+        #dst_sig_l = librosa.util.fix_length(audio[0,:], size=22000)
+        #dst_sig_r = librosa.util.fix_length(audio[1,:], size=22000)
+        #audio = np.stack([dst_sig_l,dst_sig_r],axis=0)
+        
+        #get the spectrogram of both channel
+
+        if self.dataset == "mp3d":
+            audio, audio_rate = librosa.load(wave_path, sr=16000, mono=False, duration=0.11)
+            audio_spec_both = generate_spectrogram_mp3d(audio[0,:], audio[1,:], resize = False)
+        elif self.dataset == "replica":
+            audio, audio_rate = librosa.load(wave_path, sr=44100, mono=False, duration=0.11)
+            audio_spec_both = generate_spectrogram_replica(audio[0,:], audio[1,:], resize = False)
+
+        return  audio_spec_both
+
+    def __getitem__(self, index):
+        rgb_path, depth_path, wave_path = self.rgb_paths[index], self.depth_paths[index], self.wave_paths[index]
+        #print(fn)
+
+        inputs = {}
+        # with open('rgbpath.txt', "a") as f:
+        #     f.write(str(fn) + '\n')
+        #     f.close()
+        # img = cv2.imread(fn)
+        # img = cv2.resize(img, (512,256), interpolation=cv2.INTER_CUBIC)
+
+        
+        # depth = cv2.imread(label, cv2.IMREAD_ANYDEPTH)
+        # depth = cv2.resize(depth,(512,256),interpolation=cv2.INTER_CUBIC)
+        rgb = (self.get_PanoCacheObs_rgb(rgb_path)).astype(np.float32)
+        #ipdb.set_trace()
+        rgb = cv2.resize(rgb, dsize=(self.w, self.h), interpolation=cv2.INTER_CUBIC)
+
+        gt_depth = (self.get_PanoCacheObs_depth(depth_path)).astype(np.float32)
+        gt_depth = cv2.resize(gt_depth, dsize=(self.w, self.h), interpolation=cv2.INTER_NEAREST)
+
+        #ipdb.set_trace()
+        
+        #rgb = cv2.resize(rgb, dsize=(512, 256))
+        #gt_depth = cv2.resize(gt_depth, dsize=(512, 256), interpolation=cv2.INTER_CUBIC)
+        #gt_depth = cv2.resize(gt_depth, dsize=(512, 256))
+        #gt_depth = gt_depth.astype(np.float32)/512#gt_depth = gt_depth.astype(np.float)
+        gt_depth = gt_depth.astype(np.float32)#gt_depth = gt_depth.astype(np.float)
+
+        #ipdb.set_trace()
+
+        gt_depth[gt_depth > self.max_depth_meters + 1] = self.max_depth_meters + 1
+        
+        #print("gt_depth normalise between 0-1 using (self.max_depth_meters + 1) with self.max_depth_meters={}".format(self.max_depth_meters))
+        gt_depth = gt_depth/(self.max_depth_meters + 1) #norm 0-1
+
+        if self.is_training and self.yaw_rotation_augmentation:
+            # random yaw rotation
+            roll_idx = random.randint(0, self.w//4)
+        else:
+            roll_idx = int(self.w//8) #put center fro echo in center
+            #roll_idx = 0
+            
+        
+        #rgb = np.roll(rgb, roll_idx, 1)
+        #gt_depth = np.roll(gt_depth, roll_idx, 1)
+
+        if self.is_training and self.LR_filp_augmentation and random.random() > 0.5:
+            rgb = cv2.flip(rgb, 1)
+            gt_depth = cv2.flip(gt_depth, 1)
+
+        if self.is_training and self.color_augmentation and random.random() > 0.5:
+            aug_rgb = np.asarray(self.color_aug((transforms.ToPILImage()((rgb*255.).astype(np.uint8)))))/255.
+        else:
+            aug_rgb = rgb
+
+
+        #cube_rgb, cube_gt_depth = self.e2c.run(rgb, gt_depth[..., np.newaxis])
+        cube_rgb = self.e2c.run(rgb)
+
+        #cv2.imwrite("./your_file_cube_rgb.jpeg", cube_rgb*255.)
+
+        cube_aug_rgb = self.e2c.run(aug_rgb)
+
+        rgb = self.to_tensor(rgb.copy()).to(torch.float32)
+        aug_rgb = self.to_tensor(aug_rgb.copy()).to(torch.float32)
+
+        spec_binaural = self.get_spec(wave_path)
+
+        cube_rgb = self.to_tensor(cube_rgb.copy())
+        cube_aug_rgb = self.to_tensor(cube_aug_rgb.copy())
+
+        inputs["rgb"] = rgb
+        inputs["normalized_rgb"] = self.normalize(aug_rgb)
+
+        inputs["cube_rgb"] = cube_rgb
+        inputs["normalized_cube_rgb"] = self.normalize(cube_aug_rgb)
+
+
+        inputs["gt_depth"] = torch.from_numpy(np.expand_dims(gt_depth, axis=0)).to(torch.float32)
+        inputs["val_mask"] = ((inputs["gt_depth"] > 0) & (inputs["gt_depth"] <= (self.max_depth_meters)/(self.max_depth_meters+1) )
+                                & ~torch.isnan(inputs["gt_depth"]))
+
+        inputs['spec_binaural'] = spec_binaural
+
+        """
+        cube_gt_depth = torch.from_numpy(np.expand_dims(cube_gt_depth[..., 0], axis=0))
+        inputs["cube_gt_depth"] = cube_gt_depth
+        inputs["cube_val_mask"] = ((cube_gt_depth > 0) & (cube_gt_depth <= self.max_depth_meters)
+                                    & ~torch.isnan(cube_gt_depth))
+        """
+
+        return inputs
+
+
+    def __len__(self):
+        return len(self.rgb_paths)
+
+
 
 if __name__ == "__main__":
     from tqdm import tqdm

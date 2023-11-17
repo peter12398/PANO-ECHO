@@ -17,8 +17,10 @@ torch.cuda.manual_seed(100)
 from metrics import compute_depth_metrics, Evaluator
 from losses import BerhuLoss
 import loss_gradient as loss_g
+from network.networks_unifuse import UniFuse
+from network.networks_bifuse import MyModel as Bifuse
 from network.model import Panoformer as PanoBiT
-from dataload import Dataload_RealEquirectangular_PanoCacheObs
+from dataload import Dataload_RealEquirectangular_PanoCacheObs, Dataload_RealEquirectangular_PanoCacheObs_Unifuse
 import random
 import pandas as pd
 import ipdb
@@ -29,6 +31,8 @@ def gradient(x):
     return g_x, g_y
 
 MAX_DEPTH = 16
+
+
 
 class Trainer:
     def __init__(self, settings):
@@ -52,34 +56,58 @@ class Trainer:
 
         self.log_path = os.path.join(self.settings.log_dir, self.settings.model_name)
         print("dataset {} used.\n".format(self.settings.dataset))
+        
+        if self.settings.model == "PanoFormer" or self.settings.model == "Bifuse":
+            data_loader = Dataload_RealEquirectangular_PanoCacheObs
+        elif self.settings.model == "Unifuse":
+            data_loader = Dataload_RealEquirectangular_PanoCacheObs_Unifuse
 
-        train_dataset = Dataload_RealEquirectangular_PanoCacheObs(data_path="./prepare_datasets/dataset_realEquirec_{}_organized".format(self.settings.dataset), mode="train",disable_color_augmentation = self.settings.disable_color_augmentation, disable_LR_filp_augmentation = self.settings.disable_LR_filp_augmentation,
-                                     disable_yaw_rotation_augmentation = self.settings.disable_yaw_rotation_augmentation, is_training=True, dataset_use_ratio = self.settings.dataset_use_ratio, dataset = self.settings.dataset)
- 
+        train_dataset = data_loader(data_path="./prepare_datasets/dataset_realEquirec_{}_organized".format(self.settings.dataset), mode="train",disable_color_augmentation = self.settings.disable_color_augmentation, disable_LR_filp_augmentation = self.settings.disable_LR_filp_augmentation,
+                                        disable_yaw_rotation_augmentation = self.settings.disable_yaw_rotation_augmentation, is_training=True, dataset_use_ratio = self.settings.dataset_use_ratio, dataset = self.settings.dataset)
+        
 
         self.train_loader = DataLoader(train_dataset, self.settings.batch_size, True,
                                        num_workers=self.settings.num_workers, pin_memory=True, drop_last=True)
         num_train_samples = len(train_dataset)
         self.num_total_steps = num_train_samples // self.settings.batch_size * self.settings.num_epochs
 
-        val_dataset = Dataload_RealEquirectangular_PanoCacheObs(data_path="./prepare_datasets/dataset_realEquirec_{}_organized".format(self.settings.dataset), mode="val",disable_color_augmentation = self.settings.disable_color_augmentation, disable_LR_filp_augmentation = self.settings.disable_LR_filp_augmentation,
-                                     disable_yaw_rotation_augmentation = self.settings.disable_yaw_rotation_augmentation, is_training=False, dataset_use_ratio = self.settings.dataset_use_ratio, dataset = self.settings.dataset)
- 
+
+        val_dataset = data_loader(data_path="./prepare_datasets/dataset_realEquirec_{}_organized".format(self.settings.dataset), mode="val",disable_color_augmentation = self.settings.disable_color_augmentation, disable_LR_filp_augmentation = self.settings.disable_LR_filp_augmentation,
+                                        disable_yaw_rotation_augmentation = self.settings.disable_yaw_rotation_augmentation, is_training=False, dataset_use_ratio = self.settings.dataset_use_ratio, dataset = self.settings.dataset)
+       
 
         self.val_loader = DataLoader(val_dataset, self.settings.batch_size, False,
                                      num_workers=self.settings.num_workers, pin_memory=True, drop_last=True)
 
 
-        test_dataset = Dataload_RealEquirectangular_PanoCacheObs(data_path="./prepare_datasets/dataset_realEquirec_{}_organized".format(self.settings.dataset), mode="test",disable_color_augmentation = self.settings.disable_color_augmentation, disable_LR_filp_augmentation = self.settings.disable_LR_filp_augmentation,
+        test_dataset = data_loader(data_path="./prepare_datasets/dataset_realEquirec_{}_organized".format(self.settings.dataset), mode="test",disable_color_augmentation = self.settings.disable_color_augmentation, disable_LR_filp_augmentation = self.settings.disable_LR_filp_augmentation,
                                      disable_yaw_rotation_augmentation = self.settings.disable_yaw_rotation_augmentation, is_training=False, dataset_use_ratio = self.settings.dataset_use_ratio, dataset = self.settings.dataset)
  
 
         self.test_loader = DataLoader(test_dataset, 1, False,
                                      num_workers=self.settings.num_workers, pin_memory=True, drop_last=True)
                
-        print("PanoFormer used.\n")
-        print("self.settings.audio_enhanced:{}.\n".format(self.settings.audio_enhanced))                            
-        self.model = PanoBiT(audio_enhanced = self.settings.audio_enhanced)
+
+        if self.settings.model == "Unifuse": 
+            print("Unifuse used.\n")
+            print("self.settings.audio_enhanced:{}.\n".format(self.settings.audio_enhanced))
+            self.model =  UniFuse(audio_enhanced = self.settings.audio_enhanced)
+
+        elif self.settings.model == "PanoFormer":    
+            print("PanoFormer used.\n")
+            print("self.settings.audio_enhanced:{}.\n".format(self.settings.audio_enhanced))                 
+            self.model = PanoBiT(audio_enhanced = self.settings.audio_enhanced)
+        elif self.settings.model == "Bifuse": 
+            print("Bifuse used.\n")
+            print("self.settings.audio_enhanced:{}.\n".format(self.settings.audio_enhanced))    
+            self.model = Bifuse(
+                layers=18,
+                decoder="upproj",
+                output_size=None,
+                in_channels=3,
+                pretrained=True, 
+                audio_enhanced = self.settings.audio_enhanced
+                )
         #self.model = nn.DataParallel(self.model)
         self.model.cuda()
 
