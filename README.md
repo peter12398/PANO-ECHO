@@ -78,6 +78,7 @@ python test.py \
 ```
 
 For Unifuse and Bifuse, change the parameter --model to Unifuse and Bifuse respectively.
+To train and test the baseline model, change --audio_enhanced to 0
 
 ## Acknowledgement
 This project is based on *[PanoFormer](https://github.com/zhijieshen-bjtu/PanoFormer)*, *[Unifuse](https://github.com/alibaba/UniFuse-Unidirectional-Fusion)*, and *[Bifuse](https://github.com/yuhsuanyeh/BiFuse)*
