@@ -155,10 +155,10 @@ class UniFuse(nn.Module):
                        "ceeAudio": CEEAudioLayer}
         
         if self.audio_enhanced:
-            #print("cuz sum ablation, thus still CEELayer used.\n")
-            print("CEEAudioLayer used.\n")
-            FusionLayer_audio = Fusion_dict["ceeAudio"]
-            #FusionLayer_audio = Fusion_dict[self.fusion_type]
+            print("cuz sum ablation, thus still CEELayer used.\n")
+            #print("CEEAudioLayer used.\n")
+            #FusionLayer_audio = Fusion_dict["ceeAudio"]
+            FusionLayer_audio = Fusion_dict[self.fusion_type]
             FusionLayer = Fusion_dict[self.fusion_type]
         else:
             print("CEELayer used.\n")

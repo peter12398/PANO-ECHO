@@ -207,17 +207,21 @@ class Trainer:
 
         losses = {}
         #print(inputs["val_mask"].size())
-
         equi_inputs = inputs["normalized_rgb"].to(torch.float32).cuda()# * inputs["val_mask"]
         audio_inputs = inputs['spec_binaural'].cuda()
 
         # cube_inputs = inputs["normalized_cube_rgb"]
+        if self.settings.model == "Unifuse": 
+            cube_inputs = inputs["normalized_cube_rgb"].cuda()
+            outputs = self.model(equi_inputs, cube_inputs, audio_inputs)
 
-        outputs = self.model(equi_inputs, audio_inputs)
+        elif self.settings.model == "PanoFormer" or self.settings.model == "Bifuse":   
+            outputs = self.model(equi_inputs, audio_inputs)
 
         gt = inputs["gt_depth"] * inputs["val_mask"]
         pred = outputs["pred_depth"] * inputs["val_mask"]
         outputs["pred_depth"] = outputs["pred_depth"] * inputs["val_mask"]
+        
 
         G_x, G_y = gradient(gt.float())
         p_x, p_y = gradient(pred)
