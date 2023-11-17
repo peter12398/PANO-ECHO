@@ -4,6 +4,7 @@ code for PANO-ECHO: PANOramic depth prediction enhancement with ECHO features
 ## 0.Genration of 360° equirectangular dataset from SoundSpace
 0.Download the SoundSpace dataset (Matterport3d and Replica) from *[SoundSpace](https://github.com/facebookresearch/)*
 1.Install habitat-sim: Please refer to *[habitat-sim](https://github.com/facebookresearch/habitat-sim)* for the installation of habitat-sim.
+2.Render equirectangular RGB and depth observations:
 ```bash
 cd prepare_datasets
 bash img360_extraction.sh
