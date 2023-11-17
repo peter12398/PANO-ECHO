@@ -48,7 +48,7 @@ python train.py \
 --audio_enhanced 1 \
 ```
 
-## 1.Test from trained model
+## 2.Test from trained model
 Test PanoFormer with echos on replica dataset
 ```bash
 python test.py \
@@ -76,6 +76,8 @@ python test.py \
 --dataset mp3d \
 --audio_enhanced 1 \
 ```
+
+For Unifuse and Bifuse, change the parameter --model to Unifuse and Bifuse respectively.
 
 ## Acknowledgement
 This project is based on *[PanoFormer](https://github.com/zhijieshen-bjtu/PanoFormer)*, *[Unifuse](https://github.com/alibaba/UniFuse-Unidirectional-Fusion)*, and *[Bifuse](https://github.com/yuhsuanyeh/BiFuse)*
