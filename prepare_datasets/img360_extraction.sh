@@ -1,0 +1,1 @@
+python img360_extraction.py  --sound_spaces_data_path  /path/to/sound-spaces/data/ --dataset replica

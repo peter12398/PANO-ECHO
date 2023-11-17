@@ -1,0 +1,1 @@
+python img360_split_dataset.py --dataset replica 
