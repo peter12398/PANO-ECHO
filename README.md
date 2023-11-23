@@ -1,6 +1,6 @@
 # PANO-ECHO 
 code for PANO-ECHO: PANOramic depth prediction enhancement with ECHO features
-
+This repository is a fork, a changed version of the original panoformer github repository *[PanoFormer](https://github.com/zhijieshen-bjtu/PanoFormer)*
 ## 0.Genration of 360° equirectangular dataset from SoundSpace
 0.Download the SoundSpace dataset (Matterport3d and Replica) from *[SoundSpace](https://github.com/facebookresearch/)*
 1.Install habitat-sim: Please refer to *[habitat-sim](https://github.com/facebookresearch/habitat-sim)* for the installation of habitat-sim.
