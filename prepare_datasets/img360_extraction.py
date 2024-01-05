@@ -74,11 +74,6 @@ for scene in os.listdir(metadata_dir):
         #os.makedirs(save_img_path_semantic)
         #os.makedirs(save_img_path_semantic_cat)
         
-        """
-        scenes = SCENE_SPLITS['train'] + SCENE_SPLITS['val'] + SCENE_SPLITS['test']
-        scenes.remove('2n8kARJN3HM')
-        scene_ids = [f"/sas1/xiaohu/sound-spaces/data/scene_datasets/mp3d/{scene}/{scene}.glb" for scene in scenes]
-        """
         if DATASET == 'replica':
             scene_path = os.path.join(sound_spaces_data_path, "scene_datasets", "replica", scene, 'habitat/mesh_semantic.ply')
         else:
