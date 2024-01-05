@@ -15,8 +15,9 @@ try:
 except:
     from .attention_blocks import MultiHeadedCrossmodalAttentionModule
 
+
 class SpecEnc(nn.Module):
-    def __init__(self):
+    def __init__(self, model_mode, audioencoder_load_imagenet_pretrained_weights):
         """
         ResNet-18.
         Takes in observations and produces an embedding of the rgb and depth components
@@ -26,18 +27,17 @@ class SpecEnc(nn.Module):
         self._n_input_spec = 2
         new_dict = {}
           
-        self.cnn = models.resnet18(pretrained=False)
-        #self.cnn = models.resnet34(pretrained=False)
-        self.cnn.fc_backup = self.cnn.fc
+        self.cnn = models.resnet18(pretrained=audioencoder_load_imagenet_pretrained_weights) #resnet18() #models.resnet18(pretrained=False)
+        if audioencoder_load_imagenet_pretrained_weights:
+            print("resnet18 loaded pretrained weights.")
+        self.model_mode = model_mode
+        
+        
+        print("removed fc and avgpool for cross_attention")
         self.cnn.fc = nn.Sequential()
-        """
-        self.cnn = models.resnet18(pretrained=False)
-        pretrained_dict = torch.load(pretrained_minc2500_resnet18_path)['params']
-        model_dict = self.cnn.state_dict()
-        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
-        model_dict.update(pretrained_dict)
-        self.cnn.load_state_dict(model_dict)
-        """
+        #self.cnn.avgpool = nn.Sequential()
+
+
 
         if self._n_input_spec != 3:
             self.cnn.conv1 = nn.Conv2d(self._n_input_spec,
@@ -51,68 +51,32 @@ class SpecEnc(nn.Module):
                 self.cnn.conv1.weight, mode="fan_out", nonlinearity="relu",
             )
 
+        self.cnn.avgpool = nn.AdaptiveAvgPool2d((8, 16)) #nn.Sequential()
         
-        value_scale = 1. #255
-        mean = [0.485, 0.456, 0.406]
-        self.mean = [item * value_scale for item in mean]
-        std = [0.229, 0.224, 0.225]
-        self.std = [item * value_scale for item in std]
-
-
-    @property
-    def is_blind(self):
-        """
-        get if network produces any output features or not
-        :return: if network produces any output features or not
-        """
-        return False
-
-    @property
-    def n_out_feats(self):
-        """
-        get number of visual encoder output features
-        :return: number of visual encoder output features
-        """
-        if self.is_blind:
-            return 0
-        else:
-            # resnet-18
-            return 512
-
     def forward(self, cnn_input,):
-        """
-        does forward pass in visual encoder
-        :param observations: observations
-        :return: visual features
-        """
+        #if self.model_mode == "cross_attention":
+        x = self.cnn.conv1(cnn_input) # -> torch.Size([1, 64, 129, 156])
+        x = self.cnn.bn1(x) 
+        x = self.cnn.relu(x)
 
-        """
-        cnn_input = []
-        if self._n_input_rgb > 0:
-            rgb_observations = observations["rgb"]
-            # permute tensor to dimension [BATCH x CHANNEL x HEIGHT X WIDTH]
-            rgb_observations = rgb_observations.permute(0, 3, 1, 2)
-            rgb_observations = rgb_observations.float() / 255.0  # normalize RGB
-            cnn_input.append(rgb_observations)
+        x = self.cnn.maxpool(x) # -> torch.Size([1, 64, 65, 78])
 
-        if self._n_input_depth > 0:
-            depth_observations = observations["depth"]
-            # permute tensor to dimension [BATCH x CHANNEL x HEIGHT X WIDTH]
-            depth_observations = depth_observations.float().permute(0, 3, 1, 2)
-            cnn_input.append(depth_observations)
+        x = self.cnn.layer1(x) # -> torch.Size([1, 64, 65, 78])
+        x = self.cnn.layer2(x) # -> torch.Size([1, 128, 33, 39])
+        x = self.cnn.layer3(x) # -> torch.Size([1, 256, 17, 20])
+        x = self.cnn.layer4(x) # -> torch.Size([1, 512, 9, 10])
+        #spec_feat = self.cnn.avgpool(x) # -> torch.Size([1, 256, 8, 16])
+        
+        spec_feat = self.cnn.avgpool(x) # -> torch.Size([1, 256, 8, 16])
+        return spec_feat
 
-        cnn_input = torch.cat(cnn_input, dim=1)
-        """
-        #cnn_input[:,0:3,:,:] = TTR.Normalize(self.mean, self.std)(cnn_input[:,0:3,:,:])
-        #cnn_input = TTR.Normalize(self.mean, self.std)(cnn_input)
-        return self.cnn(cnn_input)
 
 
 class UniFuse(nn.Module):
     """ UniFuse Model: Resnet based Euqi Encoder and Cube Encoder + Euqi Decoder
     """
-    def __init__(self, num_layers = 18, equi_h = 512, equi_w = 1024, pretrained=True, max_depth=16.0,
-                 fusion_type="cee", se_in_fusion=True, audio_enhanced = False):
+    def __init__(self, num_layers = 18, equi_h = 256, equi_w = 512, pretrained=False, max_depth=16.0,
+                 fusion_type="cee", se_in_fusion=True, model_mode = "baseline"):
         super(UniFuse, self).__init__()
 
         self.num_layers = num_layers
@@ -122,7 +86,9 @@ class UniFuse(nn.Module):
 
         self.fusion_type = fusion_type
         self.se_in_fusion = se_in_fusion
-        self.audio_enhanced = audio_enhanced
+        self.model_mode = model_mode
+        print("self.model_mode for Unifuse: {}".format(self.model_mode))
+        
 
         # encoder
         encoder = {2: mobilenet_v2,
@@ -154,20 +120,21 @@ class UniFuse(nn.Module):
                        "cee": CEELayer,
                        "ceeAudio": CEEAudioLayer}
         
-        if self.audio_enhanced:
+        if self.model_mode == "ablation_cat":
+            print("CEEAudioLayer used.\n")
+            FusionLayer_audio = Fusion_dict["ceeAudio"]
+            FusionLayer = Fusion_dict[self.fusion_type]
+        else:
             print("cuz sum ablation, thus still CEELayer used.\n")
             #print("CEEAudioLayer used.\n")
             #FusionLayer_audio = Fusion_dict["ceeAudio"]
             FusionLayer_audio = Fusion_dict[self.fusion_type]
             FusionLayer = Fusion_dict[self.fusion_type]
-        else:
-            print("CEELayer used.\n")
-            FusionLayer = Fusion_dict[self.fusion_type]
 
 
         self.c2e["5"] = Cube2Equirec(self.cube_h // 32, self.equi_h // 32, self.equi_w // 32)
 
-        if self.audio_enhanced:
+        if self.model_mode != "baseline":
             self.equi_dec_convs["fusion_5"] = FusionLayer_audio(self.num_ch_enc[4], SE=self.se_in_fusion)
         else:
             self.equi_dec_convs["fusion_5"] = FusionLayer(self.num_ch_enc[4], SE=self.se_in_fusion)
@@ -201,7 +168,7 @@ class UniFuse(nn.Module):
         self.equi_decoder = nn.ModuleList(list(self.equi_dec_convs.values()))
         self.projectors = nn.ModuleList(list(self.c2e.values()))
 
-        self.spec_enc = SpecEnc()
+        self.spec_enc = SpecEnc(model_mode = self.model_mode, audioencoder_load_imagenet_pretrained_weights = False)
         self.cross_attn_visual = MultiHeadedCrossmodalAttentionModule(d_model = 512, num_heads = 8)
         self.cross_attn_audio = MultiHeadedCrossmodalAttentionModule(d_model = 512, num_heads = 8)
 
@@ -209,14 +176,11 @@ class UniFuse(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
         self.max_depth = nn.Parameter(torch.tensor(max_depth), requires_grad=False)
+        print("self.max_depth = {} set for Unifuse, which will be multiplied for output.".format(self.max_depth))
+
 
 
     def forward(self, input_equi_image, input_cube_image, spec):
-
-        # euqi image encoding
-        #print("zero like used for input_equi_image and input_cube_image")
-        #input_equi_image = torch.zeros_like(input_equi_image)
-        #input_cube_image = torch.zeros_like(input_cube_image)
 
         if self.num_layers < 18:
             equi_enc_feat0, equi_enc_feat1, equi_enc_feat2, equi_enc_feat3, equi_enc_feat4 \
@@ -259,44 +223,40 @@ class UniFuse(nn.Module):
         cube_enc_feat4 = torch.cat(torch.split(cube_enc_feat4, input_equi_image.shape[0], dim=0), dim=-1)
         c2e_enc_feat4 = self.c2e["5"](cube_enc_feat4)
         
-        if not self.audio_enhanced:
+        equi_enc_feat4_w, equi_enc_feat4_h = equi_enc_feat4.shape[-2:][0],equi_enc_feat4.shape[-2:][1]
+        
+        if self.model_mode == "baseline":
             fused_feat4 = self.equi_dec_convs["fusion_5"](equi_enc_feat4, c2e_enc_feat4) # -> torch.Size([2, 512, 16, 32])
-        else:
-            # equi_enc_feat4.shape: torch.Size([12, 512, 16, 32])
-            # c2e_enc_feat4.shape: torch.Size([12, 512, 16, 32])
-            #spec_feat = self.spec_enc(spec).unsqueeze(-1).unsqueeze(-1) #.repeat(1,1,16,32)
-            #ipdb.set_trace()
-            """
-            # ablation concatenation
-            spec_feat = self.spec_enc(spec).unsqueeze(-1).unsqueeze(-1).repeat(1,1,16,32)
+        
+        elif self.model_mode == "ablation_cat":
+            spec_feat = self.spec_enc(spec)
             assert spec_feat.shape == equi_enc_feat4.shape == c2e_enc_feat4.shape
             # spec_feat.shape: torch.Size([12, 512])
             fused_feat4 = self.equi_dec_convs["fusion_5"](equi_enc_feat4, c2e_enc_feat4, spec_feat)
-            """
+            
+        elif self.model_mode == "ablation_sum":    
+
+            # ablation summation
+            spec_feat = self.spec_enc(spec)
+            equi_enc_feat4 = equi_enc_feat4 + spec_feat
+            fused_feat4 = self.equi_dec_convs["fusion_5"](equi_enc_feat4, c2e_enc_feat4)
+
+        elif self.model_mode == "cross_attention":   
             
             # cross attention
-            #equi_enc_feat4 = equi_enc_feat4 + spec_feat
-            #fused_feat4 = self.equi_dec_convs["fusion_5"](equi_enc_feat4, c2e_enc_feat4)
-            
-            #ablation only sound, zero as rgb
-            spec_feat = self.spec_enc(spec).unsqueeze(-1).unsqueeze(-1).repeat(1,1,16,32)
+            spec_feat = self.spec_enc(spec) #.unsqueeze(-2).repeat(1,conv4_orig.shape[-1],1) # B, 512, 9,10
+            B_, C_, h_, w_ = spec_feat.shape[0],spec_feat.shape[1],spec_feat.shape[2], spec_feat.shape[3]
+            spec_feat = spec_feat.view(B_, C_, h_*w_).permute(0,2,1) # B, 9*10, 512
             #ipdb.set_trace()
-            spec_feat = spec_feat.contiguous().view(spec_feat.shape[0], 512, -1)
-            equi_enc_feat4_ = equi_enc_feat4.contiguous().view(spec_feat.shape[0], 512, -1)
-            
-            audio_skip = self.cross_attn_visual(inputs = equi_enc_feat4_, img_feat = spec_feat)
+            equi_enc_feat4_ = equi_enc_feat4.view(spec_feat.shape[0], 512, equi_enc_feat4_w*equi_enc_feat4_h).permute(0,2,1) #[B,512,128] -> [B,128,512] 
+            audio_skip = self.cross_attn_visual(inputs = equi_enc_feat4_, img_feat = spec_feat) #[B,128,512] 
             visual_skip = self.cross_attn_audio(inputs = spec_feat , img_feat = equi_enc_feat4_)
-            #skip = self.fusion_conv(torch.cat([visual_out, audio_out], dim=1).unsqueeze(-1)).squeeze(-1)
-            #conv4 = skip #conv4_orig + skip
-            equi_enc_feat4_fused = equi_enc_feat4_ + visual_skip + spec_feat + audio_skip
-            equi_enc_feat4_fused_reshaped = equi_enc_feat4_fused.contiguous().view(spec_feat.shape[0], 512, 16, 32)
             
-            fused_feat4 = self.equi_dec_convs["fusion_5"](equi_enc_feat4_fused_reshaped, c2e_enc_feat4)
+            equi_enc_feat4 = (equi_enc_feat4_ + audio_skip + spec_feat + visual_skip).permute(0,2,1).view(spec_feat.shape[0], 512, equi_enc_feat4_w, equi_enc_feat4_h)
+            fused_feat4 = self.equi_dec_convs["fusion_5"](equi_enc_feat4, c2e_enc_feat4)
         
-            #assert spec_feat.shape == fused_feat4.shape
-            #fused_feat4 = fused_feat4 + spec_feat
-            
-            
+        else:
+            raise NotImplementedError
         
         #fused_feat4 = spec_feat.unsqueeze(-1).unsqueeze(-1) + fused_feat4
         #ipdb.set_trace()
@@ -333,7 +293,6 @@ class UniFuse(nn.Module):
         equi_x = self.equi_dec_convs["deconv_0"](equi_x)
 
         equi_depth = self.equi_dec_convs["depthconv_0"](equi_x)
-        #outputs["pred_depth"] = self.max_depth * self.sigmoid(equi_depth)
-        outputs["pred_depth"] = self.sigmoid(equi_depth)
+        outputs["pred_depth"] = self.max_depth * self.sigmoid(equi_depth)
 
-        return outputs
+        return outputs #self.sigmoid(equi_depth) #outputs

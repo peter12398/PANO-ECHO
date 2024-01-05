@@ -23,13 +23,14 @@ except:
     from PSA import *
 
 try:
-    from equisamplingpoint import genSamplingPattern
+    from network.equisamplingpoint import genSamplingPattern
 except:
-    from .equisamplingpoint import genSamplingPattern
+    from equisamplingpoint import genSamplingPattern
 try:
     from attention_blocks import MultiHeadedCrossmodalAttentionModule
 except:
     from .attention_blocks import MultiHeadedCrossmodalAttentionModule
+
 
 
 class StripPooling(nn.Module):
@@ -356,19 +357,13 @@ class SpecEnc(nn.Module):
         self._n_input_spec = 2
         new_dict = {}
           
-        self.cnn = models.resnet18(pretrained=False)
-        #self.cnn = models.resnet34(pretrained=False)
-        self.cnn.fc_backup = self.cnn.fc
+        self.cnn = models.resnet18() #models.resnet18(pretrained=False)
+        
+        print("removed fc and avgpool for cross_attention")
         self.cnn.fc = nn.Sequential()
         #self.cnn.avgpool = nn.Sequential()
-        """
-        self.cnn = models.resnet18(pretrained=False)
-        pretrained_dict = torch.load(pretrained_minc2500_resnet18_path)['params']
-        model_dict = self.cnn.state_dict()
-        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
-        model_dict.update(pretrained_dict)
-        self.cnn.load_state_dict(model_dict)
-        """
+
+
 
         if self._n_input_spec != 3:
             self.cnn.conv1 = nn.Conv2d(self._n_input_spec,
@@ -381,62 +376,25 @@ class SpecEnc(nn.Module):
             nn.init.kaiming_normal_(
                 self.cnn.conv1.weight, mode="fan_out", nonlinearity="relu",
             )
-
+        self.cnn.avgpool = nn.AdaptiveAvgPool2d((8*2, 16*2)) #nn.Sequential()
         
-        value_scale = 1. #255
-        mean = [0.485, 0.456, 0.406]
-        self.mean = [item * value_scale for item in mean]
-        std = [0.229, 0.224, 0.225]
-        self.std = [item * value_scale for item in std]
-
-
-    @property
-    def is_blind(self):
-        """
-        get if network produces any output features or not
-        :return: if network produces any output features or not
-        """
-        return False
-
-    @property
-    def n_out_feats(self):
-        """
-        get number of visual encoder output features
-        :return: number of visual encoder output features
-        """
-        if self.is_blind:
-            return 0
-        else:
-            # resnet-18
-            return 512
-
+        
     def forward(self, cnn_input,):
-        """
-        does forward pass in visual encoder
-        :param observations: observations
-        :return: visual features
-        """
+        #if self.model_mode == "cross_attention":
+        x = self.cnn.conv1(cnn_input) # -> torch.Size([1, 64, 129, 156])
+        x = self.cnn.bn1(x) 
+        x = self.cnn.relu(x)
 
-        """
-        cnn_input = []
-        if self._n_input_rgb > 0:
-            rgb_observations = observations["rgb"]
-            # permute tensor to dimension [BATCH x CHANNEL x HEIGHT X WIDTH]
-            rgb_observations = rgb_observations.permute(0, 3, 1, 2)
-            rgb_observations = rgb_observations.float() / 255.0  # normalize RGB
-            cnn_input.append(rgb_observations)
+        x = self.cnn.maxpool(x) # -> torch.Size([1, 64, 65, 78])
 
-        if self._n_input_depth > 0:
-            depth_observations = observations["depth"]
-            # permute tensor to dimension [BATCH x CHANNEL x HEIGHT X WIDTH]
-            depth_observations = depth_observations.float().permute(0, 3, 1, 2)
-            cnn_input.append(depth_observations)
-
-        cnn_input = torch.cat(cnn_input, dim=1)
-        """
-        #cnn_input[:,0:3,:,:] = TTR.Normalize(self.mean, self.std)(cnn_input[:,0:3,:,:])
-        #cnn_input = TTR.Normalize(self.mean, self.std)(cnn_input)
-        return self.cnn(cnn_input)
+        x = self.cnn.layer1(x) # -> torch.Size([1, 64, 65, 78])
+        x = self.cnn.layer2(x) # -> torch.Size([1, 128, 33, 39])
+        x = self.cnn.layer3(x) # -> torch.Size([1, 256, 17, 20])
+        x = self.cnn.layer4(x) # -> torch.Size([1, 512, 9, 10])
+        #spec_feat = self.cnn.avgpool(x) # -> torch.Size([1, 256, 8, 16])
+        
+        spec_feat = self.cnn.avgpool(x) # -> torch.Size([1, 256, 8, 16])
+        return spec_feat
 
 ########### Uformer ################
 class Panoformer(nn.Module):
@@ -446,7 +404,7 @@ class Panoformer(nn.Module):
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, patch_norm=True,
                  use_checkpoint=False, token_projection='linear', token_mlp='leff', se_layer=False,
-                 dowsample=Downsample, upsample=Upsample, audio_enhanced = False, **kwargs):
+                 dowsample=Downsample, upsample=Upsample, model_mode = "baseline", **kwargs):
         super().__init__()
 
         self.num_enc_layers = len(depths) // 2
@@ -464,8 +422,8 @@ class Panoformer(nn.Module):
         self.ref_point16x32 = genSamplingPattern(16, 32, 3, 3).cuda()#torch.load("network6/Equioffset16x32.pth")
 
         self.pos_drop = nn.Dropout(p=drop_rate)
-        self.audio_enhanced = audio_enhanced 
-        print("self.audio_enhanced for Panoformer: {}".format(self.audio_enhanced))
+        self.model_mode = model_mode 
+        print("self.model_mode for Panoformer: {}".format(self.model_mode))
 
         # stochastic depth
         enc_dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths[:self.num_enc_layers]))]
@@ -561,8 +519,7 @@ class Panoformer(nn.Module):
                                       use_checkpoint=use_checkpoint,
                                       token_projection=token_projection, token_mlp=token_mlp, se_layer=se_layer,ref_point=self.ref_point16x32, flag = 0)
         
-        self.spec_enc = SpecEnc()
-        #self.fusion_conv = nn.Conv2d(in_channels = 512+1, out_channels = 512, kernel_size=1)
+        self.spec_enc = SpecEnc() #resnet18() #SpecEnc()
         self.fusion_conv = nn.Conv2d(in_channels = 512+512, out_channels = 512, kernel_size=1)
         self.cross_attn_visual = MultiHeadedCrossmodalAttentionModule(d_model = 512, num_heads = 8)
         self.cross_attn_audio = MultiHeadedCrossmodalAttentionModule(d_model = 512, num_heads = 8)
@@ -633,6 +590,8 @@ class Panoformer(nn.Module):
                                                 se_layer=se_layer, ref_point=self.ref_point256x512, flag = 1)
 
         self.apply(self._init_weights)
+        self.max_depth = nn.Parameter(torch.tensor(16.), requires_grad=False)
+        print("self.max_depth = {} set for PanoFormer, which will be multiplied for output.".format(self.max_depth))
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -654,15 +613,7 @@ class Panoformer(nn.Module):
     def extra_repr(self) -> str:
         return f"embed_dim={self.embed_dim}, token_projection={self.token_projection}, token_mlp={self.mlp},win_size={self.win_size}"
 
-    def forward(self, x, spec):
-        # Input Projection
-        #y = self.pre_block(x)
-        
-        # ablation only sound, zero as rgb
-        #x = torch.zeros_like(x)
-        #print("x.max():{}\n".format(x.max()))
-        # ablation only sound, zero as rgb
-        
+    def forward(self, x, spec ):
         y = self.input_proj(x)
         y = self.pos_drop(y)
 
@@ -678,54 +629,53 @@ class Panoformer(nn.Module):
 
         # Bottleneck
         
-        """
-        # sum
-        conv4 = self.conv(pool3) #conv4 shape: torch.Size([2, 512, 512])
-        spec_feat = self.spec_enc(spec).unsqueeze(1)
-        conv4 = conv4 + spec_feat
-        """
+        if self.model_mode == "baseline":
+            # baseline
+            conv4 = self.conv(pool3)
+            
+        elif self.model_mode == "ablation_sum":
+            # sum
+            conv4 = self.conv(pool3) #conv4 shape: torch.Size([2, 512, 512])
+            #ipdb.set_trace()
+            spec_feat = self.spec_enc(spec) # -> torch.Size([2, 512, 9, 10])
+            B_, C_, h_, w_ = spec_feat.shape[0],spec_feat.shape[1],spec_feat.shape[2], spec_feat.shape[3]
+            spec_feat = spec_feat.view(B_, C_, h_*w_).permute(0,2,1) # B, 9*10, 512
+            
+            conv4 = conv4 + spec_feat
+            
+        elif self.model_mode == "ablation_cat":
+            # cat and conv
+            #print("fusion method: cat and conv used.")
+            conv4 = self.conv(pool3)
+            # the .unsqueeze(-2) is seq_length
+            
+            spec_feat = self.spec_enc(spec) #.unsqueeze(-2).repeat(1,conv4_orig.shape[-1],1) # B, 512, 9,10
+            B_, C_, h_, w_ = spec_feat.shape[0],spec_feat.shape[1],spec_feat.shape[2], spec_feat.shape[3]
+            spec_feat = spec_feat.view(B_, C_, h_*w_).permute(0,2,1) # B, 9*10, 512
+            
+            #ipdb.set_trace()
+            cat_feature = torch.cat([conv4, spec_feat], dim=-1).permute(0,2,1)
+            conv4 = self.fusion_conv(cat_feature.unsqueeze(-1)).squeeze(-1).permute(0,2,1)
+            
         
-        """
-        # cat and conv
-        conv4 = self.conv(pool3)
-        spec_feat = self.spec_enc(spec).unsqueeze(-1).repeat(1,1,conv4.shape[-1])
-        conv4 = self.fusion_conv(torch.cat([conv4, spec_feat], dim=1).unsqueeze(-1)).squeeze(-1)
-        """
-        
-        if self.audio_enhanced:
+        elif self.model_mode == "cross_attention":
             
             # cross attention
-            #ablation only sound, zero as rgb
             conv4_orig = self.conv(pool3) #conv4 shape: torch.Size([2, 512, 512])
-            #spec_feat = self.spec_enc(spec).unsqueeze(-1).repeat(1,1,conv4_orig.shape[-1])
-            spec_feat = self.spec_enc(spec).unsqueeze(-2).repeat(1,conv4_orig.shape[-1],1)
+            
+            spec_feat = self.spec_enc(spec) #.unsqueeze(-2).repeat(1,conv4_orig.shape[-1],1) # B, 512, 9,10
+            B_, C_, h_, w_ = spec_feat.shape[0],spec_feat.shape[1],spec_feat.shape[2], spec_feat.shape[3]
+            spec_feat = spec_feat.view(B_, C_, h_*w_).permute(0,2,1) # B, 9*10, 512
             #ipdb.set_trace()
-            audio_skip = self.cross_attn_visual(inputs = conv4_orig, img_feat = spec_feat)
+            
+            audio_skip = self.cross_attn_visual(inputs = conv4_orig, img_feat = spec_feat) #[B,128,512] 
             visual_skip = self.cross_attn_audio(inputs = spec_feat , img_feat = conv4_orig)
-            #skip = self.fusion_conv(torch.cat([visual_out, audio_out], dim=1).unsqueeze(-1)).squeeze(-1)
-            #conv4 = skip #conv4_orig + skip
             
             conv4 = conv4_orig + visual_skip + spec_feat + audio_skip
-            """
-            # cat and conv
-            print("fusion method: cat and conv used.")
-            conv4 = self.conv(pool3)
-            spec_feat = self.spec_enc(spec).unsqueeze(-1).repeat(1,1,conv4.shape[-1])
-            conv4 = self.fusion_conv(torch.cat([conv4, spec_feat], dim=1).unsqueeze(-1)).squeeze(-1)
-            """
-        
+
+            
         else:
-            #print("conv4.max():{}\n".format(conv4.max()))
-            #attn_output, attn_output_weights = self.multihead_attn(query, key, value)
-            
-            #conv4 = conv4 + spec_feat
-            
-            # baseline
-            conv4 = self.conv(pool3)
-            #ipdb.set_trace()
-            
-            # baseline
-            #conv4 = self.conv(pool3)
+            raise NotImplementedError
 
         # Decoder
         up0 = self.upsample_0(conv4)
@@ -748,7 +698,9 @@ class Panoformer(nn.Module):
         
         y = self.output_proj(deconv3)
         outputs = {}
-        outputs["pred_depth"] = y
+        outputs["pred_depth"] = y*self.max_depth
+        
+        #return y*self.max_depth
         return outputs
 
 
@@ -756,6 +708,6 @@ class Panoformer(nn.Module):
 if __name__ == "__main__":
     input_ =  torch.rand((1,3,256,512)).cuda()
     spec =  torch.rand((1,2,257,312)).cuda()
-    model = Panoformer().cuda()
+    model = Panoformer(model_mode = "cross_attention").cuda()
     out  = model(input_,spec)
     print(out['pred_depth'].shape)

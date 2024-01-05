@@ -41,9 +41,11 @@ parser.add_argument("--dataset_use_ratio", type=float, default=1.,help="dataset_
 parser.add_argument("--dataset", type=str, choices = ["mp3d", "replica"])
 
 parser.add_argument("--model", type=str, choices = ["PanoFormer", "Unifuse", "Bifuse"])
-parser.add_argument("--audio_enhanced", type=int, default=False)
-
+parser.add_argument("--model_mode", type=str, choices = ["baseline", "cross_attention", "ablation_cat", "ablation_sum"])
+parser.add_argument("--save_pickle", action="store_true",default = False,
+                    help="if set, save pickle file containing test result images")
 args = parser.parse_args()
+
 
 
 def main():

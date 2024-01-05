@@ -215,7 +215,7 @@ class PreprocBlock(nn.Module):
 class fusion_ResNet(nn.Module):
     _output_size_init = (256, 256)
 
-    def __init__(self, bs, layers, decoder, output_size=None, in_channels=3, pretrained=True, padding='ZeroPad', audio_enhanced = True):
+    def __init__(self, bs, layers, decoder, output_size=None, in_channels=3, pretrained=True, padding='ZeroPad', model_mode = "baseline"):
 
         if layers not in [18, 34, 50, 101, 152]:
             raise RuntimeError(
@@ -225,8 +225,8 @@ class fusion_ResNet(nn.Module):
         self.padding = getattr(CubePad, padding)
         self.pad_7 = self.padding(3)
         self.pad_3 = self.padding(1)
-        self.audio_enhanced = audio_enhanced
-        print("audio_enhanced for fusion_ResNet:{}".format(self.audio_enhanced))
+        self.model_mode = model_mode
+        print("model_mode for fusion_ResNet:{}".format(self.model_mode))
         try: from . import resnet
         except: import resnet
         pretrained_model = getattr(resnet, 'resnet%d'%layers)(pretrained=pretrained, padding=padding)
@@ -262,9 +262,9 @@ class fusion_ResNet(nn.Module):
         elif layers >= 50:
             num_channels = 2048
             
-        if self.audio_enhanced:
-            print("cross attention and sum used, thus self.conv2 num_channels instead of num_channels*2\n")
-            self.conv2 = nn.Conv2d(num_channels, num_channels //
+        if self.model_mode == "ablation_cat":
+            #print("cross attention and sum used, thus self.conv2 num_channels instead of num_channels*2\n")
+            self.conv2 = nn.Conv2d(num_channels*2, num_channels //
                                 2, kernel_size=1, bias=False)
         else:
             self.conv2 = nn.Conv2d(num_channels, num_channels //
@@ -345,7 +345,6 @@ class CETransform(nn.Module):
     def forward(self, equi, cube):
         return self.e2c(equi), self.c2e(cube)
 
-
 def lstm_forward(bilstm_list, CE, feat_equi, feat_cube, idx, max_iters=3):
     bs, bs1 = feat_equi.shape[0], feat_cube.shape[0]
     assert bs1 == bs * 6
@@ -423,7 +422,6 @@ class Refine(nn.Module):
 
         return out_3                
 
-
 class SpecEnc(nn.Module):
     def __init__(self):
         """
@@ -435,18 +433,12 @@ class SpecEnc(nn.Module):
         self._n_input_spec = 2
         new_dict = {}
           
-        self.cnn = models.resnet18(pretrained=False)
-        #self.cnn = models.resnet34(pretrained=False)
-        self.cnn.fc_backup = self.cnn.fc
+        self.cnn = models.resnet18(pretrained=False) #resnet18() #models.resnet18(pretrained=False)
+        
         self.cnn.fc = nn.Sequential()
-        """
-        self.cnn = models.resnet18(pretrained=False)
-        pretrained_dict = torch.load(pretrained_minc2500_resnet18_path)['params']
-        model_dict = self.cnn.state_dict()
-        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
-        model_dict.update(pretrained_dict)
-        self.cnn.load_state_dict(model_dict)
-        """
+        #self.cnn.avgpool = nn.Sequential()
+
+
 
         if self._n_input_spec != 3:
             self.cnn.conv1 = nn.Conv2d(self._n_input_spec,
@@ -459,62 +451,27 @@ class SpecEnc(nn.Module):
             nn.init.kaiming_normal_(
                 self.cnn.conv1.weight, mode="fan_out", nonlinearity="relu",
             )
+        
+        self.cnn.avgpool = nn.AdaptiveAvgPool2d((8, 16)) #nn.Sequential()
 
         
-        value_scale = 1. #255
-        mean = [0.485, 0.456, 0.406]
-        self.mean = [item * value_scale for item in mean]
-        std = [0.229, 0.224, 0.225]
-        self.std = [item * value_scale for item in std]
-
-
-    @property
-    def is_blind(self):
-        """
-        get if network produces any output features or not
-        :return: if network produces any output features or not
-        """
-        return False
-
-    @property
-    def n_out_feats(self):
-        """
-        get number of visual encoder output features
-        :return: number of visual encoder output features
-        """
-        if self.is_blind:
-            return 0
-        else:
-            # resnet-18
-            return 512
-
     def forward(self, cnn_input,):
-        """
-        does forward pass in visual encoder
-        :param observations: observations
-        :return: visual features
-        """
+        #if self.model_mode == "cross_attention":
+        x = self.cnn.conv1(cnn_input) # -> torch.Size([1, 64, 129, 156])
+        x = self.cnn.bn1(x) 
+        x = self.cnn.relu(x)
 
-        """
-        cnn_input = []
-        if self._n_input_rgb > 0:
-            rgb_observations = observations["rgb"]
-            # permute tensor to dimension [BATCH x CHANNEL x HEIGHT X WIDTH]
-            rgb_observations = rgb_observations.permute(0, 3, 1, 2)
-            rgb_observations = rgb_observations.float() / 255.0  # normalize RGB
-            cnn_input.append(rgb_observations)
+        x = self.cnn.maxpool(x) # -> torch.Size([1, 64, 65, 78])
 
-        if self._n_input_depth > 0:
-            depth_observations = observations["depth"]
-            # permute tensor to dimension [BATCH x CHANNEL x HEIGHT X WIDTH]
-            depth_observations = depth_observations.float().permute(0, 3, 1, 2)
-            cnn_input.append(depth_observations)
-
-        cnn_input = torch.cat(cnn_input, dim=1)
-        """
-        #cnn_input[:,0:3,:,:] = TTR.Normalize(self.mean, self.std)(cnn_input[:,0:3,:,:])
-        #cnn_input = TTR.Normalize(self.mean, self.std)(cnn_input)
-        return self.cnn(cnn_input)
+        x = self.cnn.layer1(x) # -> torch.Size([1, 64, 65, 78])
+        x = self.cnn.layer2(x) # -> torch.Size([1, 128, 33, 39])
+        x = self.cnn.layer3(x) # -> torch.Size([1, 256, 17, 20])
+        x = self.cnn.layer4(x) # -> torch.Size([1, 512, 9, 10])
+        #spec_feat = self.cnn.avgpool(x) # -> torch.Size([1, 256, 8, 16])
+        
+        spec_feat = self.cnn.avgpool(x) # -> torch.Size([1, 256, 8, 16])
+        
+        return spec_feat
 
 def unet_upconv(input_nc, output_nc, outermost=False, norm_layer=nn.BatchNorm2d):
     upconv = nn.ConvTranspose2d(input_nc, output_nc, kernel_size=4, stride=2, padding=1)
@@ -559,38 +516,24 @@ class attentionNet(nn.Module):
         return attention, audioVisual_feature
 
 class MyModel(nn.Module):
-    def __init__(self, layers, decoder, output_size=None, in_channels=3, pretrained=True, audio_enhanced = True):
+    def __init__(self, layers, decoder, output_size=None, in_channels=3, pretrained=True, model_mode = "baseline"):
         super(MyModel, self).__init__()
         bs = 1
-        self.audio_enhanced = audio_enhanced
-        print("audio_enhanced Bifuse: {}".format(audio_enhanced))
-        """
-        self.equi_model = fusion_ResNet(
-            bs, layers, decoder, (512, 1024), 3, pretrained, padding='ZeroPad', audio_enhanced = self.audio_enhanced)
-        self.cube_model = fusion_ResNet(
-            bs*6, layers, decoder, (256, 256), 3, pretrained, padding='SpherePad', audio_enhanced = False)
-        """
-        """
-        self.equi_model = fusion_ResNet(
-            bs, layers, decoder, (256, 512), 3, pretrained, padding='ZeroPad', audio_enhanced = False)
-        self.cube_model = fusion_ResNet(
-            bs*6, layers, decoder, (128, 128), 3, pretrained, padding='SpherePad', audio_enhanced = False)
-        """
+        self.model_mode = model_mode
+        print("model_mode Bifuse: {}".format(self.model_mode))
+        
         
         self.equi_model = fusion_ResNet(
-            bs, layers, decoder, (256, 512), 3, pretrained, padding='ZeroPad', audio_enhanced = self.audio_enhanced)
+            bs, layers, decoder, (256, 512), 3, pretrained, padding='ZeroPad', model_mode = self.model_mode)
         self.cube_model = fusion_ResNet(
-            bs*6, layers, decoder, (128, 128), 3, pretrained, padding='SpherePad', audio_enhanced = False)
+            bs*6, layers, decoder, (128, 128), 3, pretrained, padding='SpherePad')
         
         
         self.refine_model = Refine()
         
-        self.cross_attn_visual = MultiHeadedCrossmodalAttentionModule(d_model = 128, num_heads = 8)
-        self.cross_attn_audio = MultiHeadedCrossmodalAttentionModule(d_model = 128, num_heads = 8)
-        """
         self.cross_attn_visual = MultiHeadedCrossmodalAttentionModule(d_model = 512, num_heads = 8)
         self.cross_attn_audio = MultiHeadedCrossmodalAttentionModule(d_model = 512, num_heads = 8)
-        """
+        
 
         if layers <= 34:
             num_channels = 512
@@ -618,9 +561,7 @@ class MyModel(nn.Module):
         self.cube_conv3.apply(weights_init)
 
         self.ce = CETransform()
-        if self.audio_enhanced:
-            print("SpecEnc created.\n")
-            self.spec_enc = SpecEnc()
+        self.spec_enc = SpecEnc()
         
         if layers <= 34:
             ch_lst = [64, 64, 128, 256, 512, 256, 128, 64, 32]
@@ -650,7 +591,14 @@ class MyModel(nn.Module):
         #self.grid = Equirec2Cube(None, 512, 1024, 256, 90).GetGrid()
         self.grid = Equirec2Cube(None, 256, 512, 128, 90).GetGrid()
         self.d2p = Depth2Points(self.grid)
+        
+        self.max_depth = nn.Parameter(torch.tensor(16.), requires_grad=False)
+        print("self.max_depth = {} set for Bifuse, which will be multiplied for output.".format(self.max_depth))
+
+
     def forward_FCRN_fusion(self, equi, audio, fusion=False):
+        
+
         cube = self.ce.E2C(equi)
         feat_equi = self.equi_model.pre_encoder2(equi)
         feat_cube = self.cube_model.pre_encoder(cube)
@@ -676,46 +624,44 @@ class MyModel(nn.Module):
                 #ipdb.set_trace()
                 feat_cube = self.cube_model.conv2(feat_cube)
                 #feat_equi = self.equi_model.conv2(feat_equi)
-                if self.audio_enhanced:
+                if self.model_mode == "baseline":
+                    feat_equi = self.equi_model.conv2(feat_equi)
+                
+                elif self.model_mode == "ablation_sum":
                     #ipdb.set_trace()
-                    """
-                    spec_feat = self.spec_enc(audio).unsqueeze(-1).unsqueeze(-1).repeat(1,1,feat_equi.shape[-2:][0],feat_equi.shape[-2:][1])
+                    # ablation sum
+                    spec_feat = self.spec_enc(audio)
+                    #feat_equi = self.equi_model.conv2(torch.cat([feat_equi, spec_feat], 1))
+                    feat_equi = self.equi_model.conv2(feat_equi + spec_feat)
+                
+                elif self.model_mode == "ablation_cat":    
+                    # ablation cat
+                    spec_feat = self.spec_enc(audio)
                     feat_equi = self.equi_model.conv2(torch.cat([feat_equi, spec_feat], 1))
                     #feat_equi = self.equi_model.conv2(feat_equi + spec_feat)
-                    """
-                    #ablation only sound, zero as rgb
-                    size1 = feat_equi.shape[-2:][0]
-                    size2 = feat_equi.shape[-2:][1]
-                    spec_feat = self.spec_enc(audio).unsqueeze(-1).unsqueeze(-1).repeat(1,1,size1, size2)
-                    #print("feat_equi.shape:",feat_equi.shape)
-                    #ipdb.set_trace()
-                    spec_feat = spec_feat.contiguous().view(spec_feat.shape[0], 512, -1)
-                    feat_equi = feat_equi.contiguous().view(feat_equi.shape[0], 512, -1)
                     
-                    audio_skip = self.cross_attn_visual(inputs = feat_equi, img_feat = spec_feat)
-                    visual_skip = self.cross_attn_audio(inputs = spec_feat , img_feat = feat_equi)
-                    #skip = self.fusion_conv(torch.cat([visual_out, audio_out], dim=1).unsqueeze(-1)).squeeze(-1)
-                    #conv4 = skip #conv4_orig + skip
-                    """
-                    feat_equi_fused = feat_equi + visual_skip
-                    spec_feat_fused = spec_feat + audio_skip
-                    feat_equi_fused_reshaped = feat_equi_fused.contiguous().view(feat_equi_fused.shape[0], 512, size1, size2)
-                    spec_feat_fused_reshaped = spec_feat_fused.contiguous().view(feat_equi_fused.shape[0], 512, size1, size2)
-                    #ipdb.set_trace()
-                    #feat_equi = self.equi_model.conv2(feat_equi_fused_reshaped)
-                    feat_equi = self.equi_model.conv2(torch.cat([feat_equi_fused_reshaped, spec_feat_fused_reshaped], 1))
-                    #feat_equi = feat_equi_fused_reshaped
-                    #feat_equi = self.equi_model.conv2(feat_equi)
-                    """
                     
-                    feat_equi_fused = feat_equi + visual_skip + spec_feat + audio_skip
-                    feat_equi_fused_reshaped = feat_equi_fused.contiguous().view(feat_equi_fused.shape[0], 512, size1, size2)
+                elif self.model_mode == "cross_attention":  
+                    
+                    # cross attention
+                    equi_enc_feat4_w = feat_equi.shape[-2:][0]
+                    equi_enc_feat4_h = feat_equi.shape[-2:][1]
+                    equi_enc_feat4 = feat_equi
+                    
+                    spec_feat = self.spec_enc(audio) #.unsqueeze(-2).repeat(1,conv4_orig.shape[-1],1) # B, 512, 9,10
+                    B_, C_, h_, w_ = spec_feat.shape[0],spec_feat.shape[1],spec_feat.shape[2], spec_feat.shape[3]
+                    spec_feat = spec_feat.view(B_, C_, h_*w_).permute(0,2,1) # B, 9*10, 512
+                    #ipdb.set_trace()
+                    equi_enc_feat4_ = equi_enc_feat4.view(B_, 512, equi_enc_feat4_w*equi_enc_feat4_h).permute(0,2,1) #[B,512,128] -> [B,128,512] 
+                    audio_skip = self.cross_attn_visual(inputs = equi_enc_feat4_, img_feat = spec_feat) #[B,128,512] 
+                    visual_skip = self.cross_attn_audio(inputs = spec_feat , img_feat = equi_enc_feat4_)
+                    
+                    feat_equi_fused_reshaped = (equi_enc_feat4_ + audio_skip + spec_feat + visual_skip).permute(0,2,1).view(B_, 512, equi_enc_feat4_w, equi_enc_feat4_h)
                     feat_equi = self.equi_model.conv2(feat_equi_fused_reshaped)
-                    
-                    
-            
                 else:
-                    feat_equi = self.equi_model.conv2(feat_equi)
+                    raise NotImplementedError
+
+                    
                 feat_cube = self.cube_model.bn2(feat_cube)
                 feat_equi = self.equi_model.bn2(feat_equi)
                 
@@ -750,10 +696,11 @@ class MyModel(nn.Module):
 
         refine_final = self.refine_model(feat_cat)
         outputs = {}
-        outputs["pred_depth"] = refine_final
+        outputs["pred_depth"] = refine_final*self.max_depth
         #ipdb.set_trace() 
-
+        
         return outputs #equi_depth, cube_depth, refine_final
+        
    
     def forward_FCRN_cube(self, equi):
         cube = self.ce.E2C(equi)
@@ -782,10 +729,11 @@ class MyModel(nn.Module):
         equi_depth = self.equi_conv3(feat_equi)
         return equi_depth
 
+    
     def forward(self, x, audio):
         return self.forward_FCRN_fusion(x, audio, True)
-
-
+  
+    
 if __name__ == "__main__":
     attention_net = attentionNet()
     equi_feat = torch.rand(2, 512,8,16)

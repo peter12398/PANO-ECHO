@@ -26,11 +26,12 @@ python train.py \
 --exp_name exp_name \
 --model PanoFormer \
 --optimiser Adam \
---num_epochs 500 \
+--num_epochs 200 \
 --mode train \
 --dataset_use_ratio 1 \
 --dataset replica \
---audio_enhanced 1 \
+--model_mode cross_attention \
+--batch_size 2 \
 ```
 
 Train PanoFormer with echos on Matterport3d dataset
@@ -42,7 +43,7 @@ python train.py \
 --exp_name exp_name \
 --model PanoFormer \
 --optimiser Adam \
---num_epochs 500 \
+--num_epochs 200 \
 --mode train \
 --dataset_use_ratio 0.1 \
 --dataset mp3d \

@@ -14,24 +14,29 @@ import torch.backends.cudnn as cudnn
 from tensorboardX import SummaryWriter
 torch.manual_seed(100)
 torch.cuda.manual_seed(100)
-from metrics import compute_depth_metrics, Evaluator
+from metrics import compute_depth_metrics, Evaluator, EarlyStopperAcc
 from losses import BerhuLoss
 import loss_gradient as loss_g
+from network.model import Panoformer as PanoBiT
 from network.networks_unifuse import UniFuse
 from network.networks_bifuse import MyModel as Bifuse
-from network.model import Panoformer as PanoBiT
-from dataload import Dataload_RealEquirectangular_PanoCacheObs, Dataload_RealEquirectangular_PanoCacheObs_Unifuse
+from dataload import Dataload_RealEquirectangular_PanoCacheObs
 import random
 import pandas as pd
 import ipdb
+
+import warnings
+warnings.filterwarnings('ignore')
+warnings.simplefilter('ignore')
+import torch.functional as F
+import requests
+import torchvision
+from PIL import Image
 
 def gradient(x):
     gradient_model = loss_g.Gradient_Net()
     g_x, g_y = gradient_model(x)
     return g_x, g_y
-
-MAX_DEPTH = 16
-
 
 
 class Trainer:
@@ -49,67 +54,71 @@ class Trainer:
 
         setup_seed(seed = self.settings.random_seed)
 
+        
         self.device = torch.device("cuda" if len(self.settings.gpu_devices) else "cpu")
         self.gpu_devices = ','.join([str(id) for id in settings.gpu_devices])
         os.environ["CUDA_VISIBLE_DEVICES"] = self.gpu_devices
         print("self.gpu_devices: ",self.gpu_devices)
+        
 
         self.log_path = os.path.join(self.settings.log_dir, self.settings.model_name)
         print("dataset {} used.\n".format(self.settings.dataset))
         
-        if self.settings.model == "PanoFormer" or self.settings.model == "Bifuse":
-            data_loader = Dataload_RealEquirectangular_PanoCacheObs
-        elif self.settings.model == "Unifuse":
-            data_loader = Dataload_RealEquirectangular_PanoCacheObs_Unifuse
+        self.MAX_DEPTH = 16
+        print("self.MAX_DEPTH defined = {}".format(self.MAX_DEPTH))
+        data_loader = Dataload_RealEquirectangular_PanoCacheObs
 
         train_dataset = data_loader(data_path="./prepare_datasets/dataset_realEquirec_{}_organized".format(self.settings.dataset), mode="train",disable_color_augmentation = self.settings.disable_color_augmentation, disable_LR_filp_augmentation = self.settings.disable_LR_filp_augmentation,
-                                        disable_yaw_rotation_augmentation = self.settings.disable_yaw_rotation_augmentation, is_training=True, dataset_use_ratio = self.settings.dataset_use_ratio, dataset = self.settings.dataset)
+                                        disable_yaw_rotation_augmentation = self.settings.disable_yaw_rotation_augmentation, is_training=True, dataset_use_ratio = self.settings.dataset_use_ratio, dataset = self.settings.dataset, model=self.settings.model)
         
-
-        self.train_loader = DataLoader(train_dataset, self.settings.batch_size, True,
-                                       num_workers=self.settings.num_workers, pin_memory=True, drop_last=True)
+        SHUFFLE = True
+        DROP_LAST = True
+            
+        self.train_loader = DataLoader(train_dataset, self.settings.batch_size, SHUFFLE,
+                                       num_workers=self.settings.num_workers, pin_memory=True, drop_last=DROP_LAST)
         num_train_samples = len(train_dataset)
         self.num_total_steps = num_train_samples // self.settings.batch_size * self.settings.num_epochs
 
 
         val_dataset = data_loader(data_path="./prepare_datasets/dataset_realEquirec_{}_organized".format(self.settings.dataset), mode="val",disable_color_augmentation = self.settings.disable_color_augmentation, disable_LR_filp_augmentation = self.settings.disable_LR_filp_augmentation,
-                                        disable_yaw_rotation_augmentation = self.settings.disable_yaw_rotation_augmentation, is_training=False, dataset_use_ratio = self.settings.dataset_use_ratio, dataset = self.settings.dataset)
+                                        disable_yaw_rotation_augmentation = self.settings.disable_yaw_rotation_augmentation, is_training=False, dataset_use_ratio = self.settings.dataset_use_ratio, dataset = self.settings.dataset, model=self.settings.model)
        
 
         self.val_loader = DataLoader(val_dataset, self.settings.batch_size, False,
-                                     num_workers=self.settings.num_workers, pin_memory=True, drop_last=True)
+                                     num_workers=self.settings.num_workers, pin_memory=True, drop_last=DROP_LAST)
 
 
         test_dataset = data_loader(data_path="./prepare_datasets/dataset_realEquirec_{}_organized".format(self.settings.dataset), mode="test",disable_color_augmentation = self.settings.disable_color_augmentation, disable_LR_filp_augmentation = self.settings.disable_LR_filp_augmentation,
-                                     disable_yaw_rotation_augmentation = self.settings.disable_yaw_rotation_augmentation, is_training=False, dataset_use_ratio = self.settings.dataset_use_ratio, dataset = self.settings.dataset)
+                                     disable_yaw_rotation_augmentation = self.settings.disable_yaw_rotation_augmentation, is_training=False, dataset_use_ratio = self.settings.dataset_use_ratio, dataset = self.settings.dataset, model=self.settings.model)
  
 
         self.test_loader = DataLoader(test_dataset, 1, False,
-                                     num_workers=self.settings.num_workers, pin_memory=True, drop_last=True)
-               
+                                     num_workers=self.settings.num_workers, pin_memory=True, drop_last=DROP_LAST)
+        
+        self.model_mode = self.settings.model_mode
+        print("self.model_mode = {}".format(self.model_mode))
 
         if self.settings.model == "Unifuse": 
             print("Unifuse used.\n")
-            print("self.settings.audio_enhanced:{}.\n".format(self.settings.audio_enhanced))
-            self.model =  UniFuse(audio_enhanced = self.settings.audio_enhanced)
+            self.model =  UniFuse(model_mode = self.model_mode)
 
         elif self.settings.model == "PanoFormer":    
-            print("PanoFormer used.\n")
-            print("self.settings.audio_enhanced:{}.\n".format(self.settings.audio_enhanced))                 
-            self.model = PanoBiT(audio_enhanced = self.settings.audio_enhanced)
+            print("PanoFormer used.\n")              
+            self.model = PanoBiT(model_mode = self.model_mode )
+            
         elif self.settings.model == "Bifuse": 
-            print("Bifuse used.\n")
-            print("self.settings.audio_enhanced:{}.\n".format(self.settings.audio_enhanced))    
+            print("Bifuse used.\n")  
             self.model = Bifuse(
                 layers=18,
                 decoder="upproj",
                 output_size=None,
                 in_channels=3,
                 pretrained=True, 
-                audio_enhanced = self.settings.audio_enhanced
+                model_mode = self.model_mode 
                 )
-        #self.model = nn.DataParallel(self.model)
+        
         self.model.cuda()
+       
 
         self.parameters_to_train = list(self.model.parameters())
 
@@ -138,6 +147,9 @@ class Trainer:
             for mode in ["train", "val"]:
                 self.writers[mode] = SummaryWriter(os.path.join(self.log_path, self.settings.exp_name ,mode))
             self.save_settings()
+        
+        self.early_stopper = EarlyStopperAcc(patience=20, min_delta=0.001)
+        self.save_pickle = self.settings.save_pickle
 
     def train(self):
         """Run the entire training pipeline
@@ -146,17 +158,21 @@ class Trainer:
         self.step = 0
         self.start_time = time.time()
         self.best_acca1 = 0
-        #ipdb.set_trace()
-        losses = self.validate()
+
         for self.epoch in range(self.settings.num_epochs):
             self.train_one_epoch()
             losses = self.validate()
+            
+            self.save_model_last()
+            
             if losses["acc/a1"] > self.best_acca1:
                 self.best_acca1 = losses["acc/a1"]
                 print("new best acc_a1:{}, model saved.\n".format(self.best_acca1))
                 self.save_model()
-            #if (self.epoch + 1) % self.settings.save_frequency == 0:
-            #    self.save_model()
+            
+            if self.early_stopper.early_stop(losses["acc/a1"]): 
+                print('early stopped')            
+                break
 
                 
     def train_one_epoch(self):
@@ -169,7 +185,7 @@ class Trainer:
 
         for batch_idx, inputs in enumerate(pbar):
 
-            outputs, losses = self.process_batch(inputs)
+            outputs, losses, runtime = self.process_batch(inputs)
 
             self.optimizer.zero_grad()
             losses["loss"].backward()
@@ -188,10 +204,6 @@ class Trainer:
                 pred_depth = outputs["pred_depth"].detach() * mask
                 gt_depth = inputs["gt_depth"] * mask
                 
-                #print("gt_depth and pred_depth denormalising..")
-                gt_depth = gt_depth*(MAX_DEPTH+1)
-                pred_depth = pred_depth*(MAX_DEPTH+1)
-
                 depth_errors = compute_depth_metrics(gt_depth, pred_depth, mask)
                 for i, key in enumerate(self.evaluator.metrics.keys()):
                     losses[key] = np.array(depth_errors[i].cpu())
@@ -206,34 +218,34 @@ class Trainer:
                 inputs[key] = ipt.cuda()
 
         losses = {}
-        #print(inputs["val_mask"].size())
+
         equi_inputs = inputs["normalized_rgb"].to(torch.float32).cuda()# * inputs["val_mask"]
         audio_inputs = inputs['spec_binaural'].cuda()
 
-        # cube_inputs = inputs["normalized_cube_rgb"]
+        start = time.time()
+        
         if self.settings.model == "Unifuse": 
             cube_inputs = inputs["normalized_cube_rgb"].cuda()
             outputs = self.model(equi_inputs, cube_inputs, audio_inputs)
-
         elif self.settings.model == "PanoFormer" or self.settings.model == "Bifuse":   
             outputs = self.model(equi_inputs, audio_inputs)
+            
+        end = time.time()
+        run_time = end - start
 
         gt = inputs["gt_depth"] * inputs["val_mask"]
         pred = outputs["pred_depth"] * inputs["val_mask"]
         outputs["pred_depth"] = outputs["pred_depth"] * inputs["val_mask"]
-        
 
         G_x, G_y = gradient(gt.float())
         p_x, p_y = gradient(pred)
-        #dmap = get_dmap(self.settings.batch_size)
+
         losses["loss"] = self.compute_loss(inputs["gt_depth"].float
                                             () * inputs["val_mask"], outputs["pred_depth"]) +\
                          self.compute_loss(G_x, p_x) +\
                          self.compute_loss(G_y, p_y)
 
-        #outputs["pred_depth"] = pred[inputs["val_mask"]]
-
-        return outputs, losses
+        return outputs, losses, run_time
 
     def validate(self):
         """Validate the model on the validation set
@@ -247,15 +259,9 @@ class Trainer:
 
         with torch.no_grad():
             for batch_idx, inputs in enumerate(pbar):
-                outputs, losses = self.process_batch(inputs)
+                outputs, losses, _ = self.process_batch(inputs)
                 pred_depth = outputs["pred_depth"].detach() * inputs["val_mask"]
                 gt_depth = inputs["gt_depth"] * inputs["val_mask"]
-                #mask = inputs["val_mask"]
-                
-                # De-normalise
-                #print("gt_depth and pred_depth denormalising..")
-                gt_depth = gt_depth*(MAX_DEPTH+1)
-                pred_depth = pred_depth*(MAX_DEPTH+1)
                 
                 self.evaluator.compute_eval_metrics(gt_depth, pred_depth)
 
@@ -285,43 +291,48 @@ class Trainer:
         gt_list = []
         losses_list = []
         batch_idx_list = []
+        depth_pred_list = []
+        run_time_list = []
+        
         
         with torch.no_grad():
             for batch_idx, inputs in enumerate(pbar):
-                outputs, losses = self.process_batch(inputs)
+                outputs, losses, run_time = self.process_batch(inputs)
                 pred_depth = outputs["pred_depth"].detach() * inputs["val_mask"]
                 gt_depth = inputs["gt_depth"] * inputs["val_mask"]
-                #mask = inputs["val_mask"]
-                #self.log("test", inputs, outputs, losses)
+
                 for key in inputs.keys():
                     inputs[key] = inputs[key].detach().cpu().numpy()
-                input_list.append(inputs)
-                pred_list.append(pred_depth.detach().cpu().numpy())
-                gt_list.append(gt_depth.detach().cpu().numpy())
-                for key in losses.keys():
-                    losses[key] = losses[key].detach().cpu().numpy()
-                losses_list.append(losses)
-                batch_idx_list.append(batch_idx)
                 
-                #print("gt_depth and pred_depth denormalising..")
-                gt_depth = gt_depth*(MAX_DEPTH+1)
-                pred_depth = pred_depth*(MAX_DEPTH+1)
+                if self.save_pickle:
+                    input_list.append(inputs)
+                    pred_list.append(pred_depth.detach().cpu().numpy())
+                    
+                    gt_list.append(gt_depth.detach().cpu().numpy())
+                    for key in losses.keys():
+                        losses[key] = losses[key].detach().cpu().numpy()
+                    losses_list.append(losses)
+                    batch_idx_list.append(batch_idx)
+                    depth_pred_list.append({int(inputs['index']):pred_depth.detach().cpu().numpy()})
+                    run_time_list.append(run_time)
                 
-                self.evaluator.compute_eval_metrics(gt_depth, pred_depth)
+                return_dict = self.evaluator.compute_eval_metrics(gt_depth, pred_depth)
 
         self.evaluator.print()
 
+        d = {'input_list':input_list, 'pred_list': pred_list, "gt_list": gt_list,  "batch_idx_list": batch_idx_list, "losses_list":losses_list}
+        stats_df = pd.DataFrame(data=d)
+        if self.save_pickle:
+            print("self.save_pickle = {}, saving pickle file".format(self.save_pickle))
+            stats_df.to_pickle("./tmp/tmp_test_results_{}.pkl".format( self.settings.exp_name))
+        
         for i, key in enumerate(self.evaluator.metrics.keys()):
             losses[key] = np.array(self.evaluator.metrics[key].avg.cpu())
         #self.log("val", inputs, outputs, losses)
-        
-        d = {'input_list':input_list, 'pred_list': pred_list, "gt_list": gt_list,  "batch_idx_list": batch_idx_list, "losses_list":losses_list}
-        stats_df = pd.DataFrame(data=d)
-        stats_df.to_pickle("./tmp/tmp_test_results_{}.pkl".format( self.settings.exp_name))
-     
 
         del inputs, outputs, losses
-        
+   
+    
     def log(self, mode, inputs, outputs, losses):
         """Write an event to the tensorboard events file
         """
@@ -331,14 +342,7 @@ class Trainer:
         for l, v in losses.items():
             writer.add_scalar("{}".format(l), v, self.step)
 
-        for j in range(min(4, self.settings.batch_size)):  # write a maxmimum of four images
-            writer.add_image("rgb/{}".format(j), inputs["rgb"][j].data, self.step)
-            # writer.add_image("cube_rgb/{}".format(j), inputs["cube_rgb"][j].data, self.step)
-            writer.add_image("gt_depth/{}".format(j),
-                             inputs["gt_depth"][j].data/inputs["gt_depth"][j].data.max(), self.step)
-            writer.add_image("pred_depth/{}".format(j),
-                             outputs["pred_depth"][j].data/outputs["pred_depth"][j].data.max(), self.step)
-
+        
     def save_settings(self):
         """Save settings to disk so we know what we ran this experiment with
         """
@@ -364,6 +368,7 @@ class Trainer:
 
         save_path = os.path.join(save_folder, "{}.pth".format("adam"))
         torch.save(self.optimizer.state_dict(), save_path)
+    
 
     def load_model(self):
         """Load model from disk
