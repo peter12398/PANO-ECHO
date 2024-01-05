@@ -163,8 +163,6 @@ class Trainer:
             self.train_one_epoch()
             losses = self.validate()
             
-            self.save_model_last()
-            
             if losses["acc/a1"] > self.best_acca1:
                 self.best_acca1 = losses["acc/a1"]
                 print("new best acc_a1:{}, model saved.\n".format(self.best_acca1))

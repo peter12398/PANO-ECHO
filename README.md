@@ -64,6 +64,7 @@ python test.py \
 --dataset_use_ratio 1 \
 --dataset replica \
 --model_mode cross_attention \
+--load_weights_dir path/to/exp_name/models/best
 ```
 
 Test PANO-ECHO with echos on Matterport3d dataset
@@ -78,6 +79,7 @@ python test.py \
 --dataset_use_ratio 0.1 \
 --dataset mp3d \
 --model_mode cross_attention \
+--load_weights_dir path/to/exp_name/models/best
 ```
 
 For Unifuse and Bifuse, change the parameter --model to Unifuse and Bifuse respectively.
