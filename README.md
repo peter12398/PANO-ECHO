@@ -17,7 +17,7 @@ The final generated datasets are named dataset_realEquirec_mp3d_organized and da
 ```bash
 cd PANO-ECHO
 ```
-Train PanoFormer with echos on replica dataset
+Train PANO-ECHO with echos on replica dataset
 ```bash
 python train.py \
 --disable_color_augmentation \
@@ -34,7 +34,7 @@ python train.py \
 --batch_size 2 \
 ```
 
-Train PanoFormer with echos on Matterport3d dataset
+Train PANO-ECHO with echos on Matterport3d dataset
 ```bash
 python train.py \
 --disable_color_augmentation \
@@ -47,11 +47,12 @@ python train.py \
 --mode train \
 --dataset_use_ratio 0.1 \
 --dataset mp3d \
---audio_enhanced 1 \
+--model_mode cross_attention \
+--batch_size 2 \
 ```
 
 ## 2.Test from trained model
-Test PanoFormer with echos on replica dataset
+Test PANO-ECHO with echos on replica dataset
 ```bash
 python test.py \
 --disable_color_augmentation \
@@ -62,10 +63,10 @@ python test.py \
 --mode test \
 --dataset_use_ratio 1 \
 --dataset replica \
---audio_enhanced 1 \
+--model_mode cross_attention \
 ```
 
-Test PanoFormer with echos on Matterport3d dataset
+Test PANO-ECHO with echos on Matterport3d dataset
 ```bash
 python test.py \
 --disable_color_augmentation \
@@ -76,7 +77,7 @@ python test.py \
 --mode test \
 --dataset_use_ratio 0.1 \
 --dataset mp3d \
---audio_enhanced 1 \
+--model_mode cross_attention \
 ```
 
 For Unifuse and Bifuse, change the parameter --model to Unifuse and Bifuse respectively.
