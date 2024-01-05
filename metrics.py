@@ -162,3 +162,23 @@ class Evaluator(object):
                 print("\n  " + ("{:>9} | " * 11).format("mre", "mae", "abs_", "abs_rel", "sq_rel", "rms", "rms_log",
                                                       "log10", "a1", "a2", "a3"), file=f)
                 print(("&  {: 8.5f} " * 11).format(*avg_metrics), file=f)
+
+#Early stoppper using a1 accuracy as monitoring variable
+class EarlyStopperAcc:
+    def __init__(self, patience=40, min_delta=0.001):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.max_validation_acc = float(0)
+
+    def early_stop(self, validation_acc):
+        if validation_acc > self.max_validation_acc:
+            self.max_validation_acc = validation_acc
+            print("new self.max_validation_acc: {}".format(self.max_validation_acc))
+            self.counter = 0
+        elif validation_acc < (self.max_validation_acc - self.min_delta):
+            self.counter += 1
+            print("new self.counter: {}".format(self.counter))
+            if self.counter >= self.patience:
+                return True
+        return False
