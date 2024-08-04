@@ -91,6 +91,7 @@ This project is based on *[PanoFormer](https://github.com/zhijieshen-bjtu/PanoFo
 The code for equirectangular dataset extraction is modified from [Dense 2D-3D Indoor Prediction with Sound via Aligned Cross-Modal Distillation (ICCV 2023)](https://github.com/HS-YN/DAPS/tree/main/DAPS) (MIT License).
 
 If you find this repository useful, please consider citing:
+```bash
 @INPROCEEDINGS{10605546,
   author={Liu, Xiaohu and Brunetto, Amandine and Hornauer, Sascha and Moutarde, Fabien and Lu, Jialiang},
   booktitle={2024 IEEE Conference on Artificial Intelligence (CAI)}, 
@@ -101,3 +102,4 @@ If you find this repository useful, please consider citing:
   pages={1063-1070},
   keywords={Measurement;Visualization;Codes;Pipelines;Estimation;Predictive models;Distortion;Audio-Visual learning;panoramic depth estimation;multi-modal fusion},
   doi={10.1109/CAI59869.2024.00193}}
+```
